@@ -38,6 +38,12 @@ if 'constants' not in st.session_state:
 if 'saved_results' not in st.session_state:
     st.session_state.saved_results = []
 
+if 'current_res' not in st.session_state:
+    st.session_state.current_res = None
+
+if 'current_geom' not in st.session_state:
+    st.session_state.current_geom = None
+
 tab_single, tab_batch, tab_geometry, tab_saved, tab_settings = st.tabs([
     "Single Analysis", "Batch Analysis", "Geometry Inspector", "Saved Data", "Settings / Constants"
 ])
@@ -86,6 +92,13 @@ with tab_single:
             ns = NozzleSelection(nozzle_id=m, effectiveness=nozzle_effectiveness, tip_clearance_m_override=tip_clearance_m_override)
             res_list.append(solve_performance(geom, cond, st.session_state.constants, ns))
         
+        st.session_state.current_res = res_list
+        st.session_state.current_geom = geom
+
+    if st.session_state.current_res:
+        res_list = st.session_state.current_res
+        geom = st.session_state.current_geom
+        
         st.subheader(f"Parsed Propeller: {geom.diameter:.3f}m Diameter, {geom.blade_count} Blades")
         if geom.description:
             st.info(f"**Description:** {geom.description}")
@@ -104,7 +117,6 @@ with tab_single:
         
         if st.button("💾 Save Results to History"):
             for r in res_list:
-                # Store a flat dictionary for the table + the full result for charting
                 entry = {
                     "Timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "Propeller": geom.file_name,
@@ -117,7 +129,7 @@ with tab_single:
                     "Power [W]": r.Pshaft_total,
                     "eta": r.eta_total,
                     "Cavitation [%]": r.Combined_Cavitation_Est_PCT,
-                    "_full_res": r # Hidden reference for plots
+                    "_full_res": r 
                 }
                 st.session_state.saved_results.append(entry)
             st.success(f"Saved {len(res_list)} results to history!")
