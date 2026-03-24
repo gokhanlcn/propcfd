@@ -9,6 +9,7 @@ from src.plots import plot_performance_curves
 from src.nozzle_library import get_nozzle_geometry
 from src.nozzle_geometry import generate_scaled_nozzle
 from src.nozzle_render import plot_nozzle_2d, plot_nozzle_3d, plot_prop_nozzle_combined
+from src.plots import plot_section_metrics
 
 import os
 
@@ -34,8 +35,11 @@ st.title("GkhnCFD")
 if 'constants' not in st.session_state:
     st.session_state.constants = ModelConstants()
 
-tab_single, tab_batch, tab_geometry, tab_settings = st.tabs([
-    "Single Analysis", "Batch Analysis", "Geometry Inspector", "Settings / Constants"
+if 'saved_results' not in st.session_state:
+    st.session_state.saved_results = []
+
+tab_single, tab_batch, tab_geometry, tab_saved, tab_settings = st.tabs([
+    "Single Analysis", "Batch Analysis", "Geometry Inspector", "Saved Data", "Settings / Constants"
 ])
 
 with st.sidebar:
@@ -98,6 +102,26 @@ with tab_single:
         } for r in res_list])
         st.dataframe(df_comp)
         
+        if st.button("💾 Save Results to History"):
+            for r in res_list:
+                # Store a flat dictionary for the table + the full result for charting
+                entry = {
+                    "Timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "Propeller": geom.file_name,
+                    "RPM": r.conditions.rpm,
+                    "Ship Speed": r.conditions.Va_ship,
+                    "Mode": r.conditions.nozzle_mode,
+                    "J": r.J,
+                    "Thrust [N]": r.T_total,
+                    "Torque [Nm]": r.Q_total,
+                    "Power [W]": r.Pshaft_total,
+                    "eta": r.eta_total,
+                    "Cavitation [%]": r.Combined_Cavitation_Est_PCT,
+                    "_full_res": r # Hidden reference for plots
+                }
+                st.session_state.saved_results.append(entry)
+            st.success(f"Saved {len(res_list)} results to history!")
+
         st.subheader("Section Metrics (First Mode)")
         df_sec = export_section_table(res_list[0])
         st.dataframe(df_sec)
@@ -182,6 +206,38 @@ with tab_geometry:
                 st.write(f"**Notes:** {ndef.profile_notes}")
         else:
             st.info("Select a nozzle type (19A, 37) to render the duct geometry.")
+
+with tab_saved:
+    st.header("Saved Analysis History")
+    if not st.session_state.saved_results:
+        st.info("No saved results yet. Run a single analysis and click 'Save to History'.")
+    else:
+        # Create a display dataframe without the hidden full result object
+        df_display = pd.DataFrame([{k: v for k, v in r.items() if k != "_full_res"} for r in st.session_state.saved_results])
+        st.dataframe(df_display, use_container_width=True)
+        
+        col_s1, col_s2 = st.columns(2)
+        csv_history = generate_csv(df_display)
+        col_s1.download_button("📥 Download All Saved Data (CSV)", data=csv_history, file_name="analysis_history.csv", mime="text/csv")
+        
+        if col_s2.button("🗑️ Clear History"):
+            st.session_state.saved_results = []
+            st.rerun()
+
+        st.markdown("---")
+        st.subheader("Detailed Section Metrics Graphics")
+        
+        # Selection for which saved result to visualize
+        result_labels = [f"{r['Timestamp']} - {r['Propeller']} ({r['Mode']} @ {r['RPM']} RPM)" for r in st.session_state.saved_results]
+        selected_idx = st.selectbox("Select a result to view distributions:", range(len(result_labels)), format_func=lambda i: result_labels[i])
+        
+        if selected_idx is not None:
+            full_res = st.session_state.saved_results[selected_idx]["_full_res"]
+            f_dt, f_cl = plot_section_metrics(full_res)
+            
+            c_p1, c_p2 = st.columns(2)
+            c_p1.plotly_chart(f_dt, use_container_width=True)
+            c_p2.plotly_chart(f_cl, use_container_width=True)
 
 with tab_settings:
     st.header("Physics Constants Override")
