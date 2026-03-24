@@ -5,11 +5,11 @@ from src.models import OperatingConditions, ModelConstants, NozzleSelection
 from src.solver import solve_performance
 from src.utils import export_section_table, generate_csv
 from src.batch import run_batch_analysis
-from src.plots import plot_performance_curves
+from src.plots import plot_performance_curves, plot_section_metrics
 from src.nozzle_library import get_nozzle_geometry
 from src.nozzle_geometry import generate_scaled_nozzle
 from src.nozzle_render import plot_nozzle_2d, plot_nozzle_3d, plot_prop_nozzle_combined
-from src.plots import plot_section_metrics
+
 
 import os
 
