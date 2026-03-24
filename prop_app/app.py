@@ -128,7 +128,12 @@ with tab_single:
                     "Torque [Nm]": r.Q_total,
                     "Power [W]": r.Pshaft_total,
                     "eta": r.eta_total,
-                    "Cavitation [%]": r.Combined_Cavitation_Est_PCT,
+                    "Static Efficiency": r.static_efficiency_est,
+                    "Thrust/Power [N/W]": r.thrust_per_power_N_per_W,
+                    "Sheet Cav. [%]": r.Sheet_Cavitation_Est_PCT,
+                    "Tip Cav. [%]": r.Tip_Vortex_Cavitation_Est_PCT,
+                    "Combined Cav. [%]": r.Combined_Cavitation_Est_PCT,
+                    "Tip Vortex Index": r.Tip_Vortex_Cav_Index,
                     "_full_res": r 
                 }
                 st.session_state.saved_results.append(entry)
