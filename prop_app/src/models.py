@@ -66,28 +66,22 @@ class ModelConstants:
     reynolds_reference: float = 2e5
     reynolds_drag_exponent: float = 0.1
     
-    # New Sheet Cavitation Constants
-    sheet_sigma_a0: float = 0.35
-    sheet_sigma_a1_cl: float = 1.20
-    sheet_sigma_a2_alpha: float = 0.08
-    sheet_sigma_a3_tc: float = 0.02
-    sheet_softening_exp: float = 1.15
+    # Sheet Cavitation Constants (Brockett -Cp_min based)
+    sheet_cpmin_thickness_k: float = 1.0     # thickness contribution factor
+    sheet_cpmin_loading_k: float = 0.25      # loading-dependent suction peak factor
+    sheet_cpmin_ideal_cl: float = 0.0        # CL at ideal incidence (zero LE loading)
+    sheet_severity_scale: float = 1.0        # calibration multiplier for severity output
     
-    # New Tip Vortex Cavitation Constants
-    tip_sigma_b0: float = 0.55
-    tip_sigma_b1_gamma: float = 2.00
-    tip_sigma_b2_dgamma: float = 0.50
-    tip_sigma_b3_tip_factor: float = 0.60
+    # Tip Vortex Cavitation Constants (McCormick model)
+    tip_mccormick_K: float = 0.55            # proportionality constant
+    tip_mccormick_m: float = 2.0             # circulation exponent (theoretical = 2)
+    tip_mccormick_n: float = 0.35            # Reynolds number exponent
+    tip_mccormick_Re_ref: float = 2e6        # reference Reynolds number
+    tip_core_radius_coeff: float = 0.10      # r_c / c proportionality
     tip_start_rR: float = 0.85
     tip_end_rR: float = 1.00
-    nozzle_tip_vortex_suppression: float = 0.35
     
-    # New Physical Nozzle Constants
-    nozzle_19a_inflow_gain: float = 0.15
-    nozzle_37_inflow_gain: float = 0.10
-    nozzle_thrust_tn_a0: float = 0.04
-    nozzle_thrust_tn_a1: float = -0.02
-    nozzle_thrust_tn_a2: float = -0.01
+    # Nozzle Interaction Constants
     tip_gap_sensitivity: float = 20.0
     tip_image_strength_base: float = 0.85
     

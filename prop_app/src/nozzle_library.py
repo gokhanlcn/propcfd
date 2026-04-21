@@ -27,8 +27,6 @@ class NozzlePerformanceDef:
     tn_a0: float
     tn_a1: float
     tn_a2: float
-    pressure_recovery_factor: float
-    cavitation_relief_factor: float
     inflow_gain: float
     tip_image_strength: float
     description: str
@@ -82,8 +80,6 @@ nozzle_19A_perf = NozzlePerformanceDef(
     tn_a0=0.045,  # Thrust contribution parameters
     tn_a1=-0.02,
     tn_a2=-0.01,
-    pressure_recovery_factor=1.05,
-    cavitation_relief_factor=1.30,
     inflow_gain=0.15,  # 19A Accelerates flow strongly
     tip_image_strength=0.90, # Strongly reduces tip loss due to thick profile
     description="Accelerating nozzle, high static thrust, mitigates tip vortex."
@@ -133,8 +129,6 @@ nozzle_37_perf = NozzlePerformanceDef(
     tn_a0=0.038,
     tn_a1=-0.015,
     tn_a2=-0.01,
-    pressure_recovery_factor=1.03,
-    cavitation_relief_factor=1.20,
     inflow_gain=0.10, # 37 Accelerates flow less aggressively
     tip_image_strength=0.85, # Reduces tip loss slightly less
     description="Accelerating nozzle, slightly lower static thrust than 19A but better astern."
@@ -155,3 +149,97 @@ def get_nozzle_geometry(nozzle_id: str) -> Optional[NozzleGeometryDef]:
 
 def get_nozzle_performance(nozzle_id: str) -> Optional[NozzlePerformanceDef]:
     return NOZZLE_PERF_LIBRARY.get(nozzle_id)
+
+# ---------------------------------------------------------
+# OOSTERVELD (1970) Ka-SERIES POLYNOMIAL COEFFICIENTS
+# ---------------------------------------------------------
+# Source: Oosterveld, M.W.C. (1970), also reproduced in
+# Carlton "Marine Propellers and Propulsion" Table 6.3
+#
+# Each term: (coefficient, s, t, u, v) where
+#   value += C * J^s * (P/D)^t * (AE/A0)^u * Z^v
+#
+# KT_nozzle for Ka-series propeller in Nozzle 19A
+OOSTERVELD_KTN_19A = [
+    ( 0.030550,  0, 0, 0, 0),
+    (-0.148687,  1, 0, 0, 0),
+    ( 0.000000,  0, 1, 0, 0),
+    (-0.391137,  2, 0, 0, 0),
+    ( 0.300397,  1, 1, 0, 0),
+    (-0.083790,  0, 2, 0, 0),
+    ( 0.327040,  3, 0, 0, 0),
+    (-0.183960,  0, 0, 1, 0),
+    ( 0.128654,  2, 1, 0, 0),
+    (-0.081960,  1, 2, 0, 0),
+    ( 0.015890,  0, 3, 0, 0),
+    ( 0.245320,  1, 0, 1, 0),
+    (-0.163520,  0, 1, 1, 0),
+    ( 0.015550,  0, 0, 2, 0),
+    (-0.042580,  3, 1, 0, 0),
+    ( 0.035840,  2, 2, 0, 0),
+    (-0.012670,  1, 3, 0, 0),
+    ( 0.001160,  0, 4, 0, 0),
+    (-0.000070,  0, 0, 0, 1),
+    ( 0.003250,  1, 0, 0, 1),
+]
+
+# 10*KQ for Ka-series propeller in Nozzle 19A
+OOSTERVELD_KQ_19A = [
+    ( 0.039440,  0, 0, 0, 0),
+    ( 0.045440,  1, 0, 0, 0),
+    ( 0.009160,  0, 1, 0, 0),
+    (-0.193960,  2, 0, 0, 0),
+    ( 0.176740,  1, 1, 0, 0),
+    (-0.058040,  0, 2, 0, 0),
+    ( 0.023500,  3, 0, 0, 0),
+    (-0.021020,  0, 0, 1, 0),
+    ( 0.058970,  2, 1, 0, 0),
+    (-0.046530,  1, 2, 0, 0),
+    ( 0.012340,  0, 3, 0, 0),
+    ( 0.025000,  1, 0, 1, 0),
+    (-0.021870,  0, 1, 1, 0),
+    ( 0.003420,  0, 0, 2, 0),
+    (-0.011120,  3, 1, 0, 0),
+    ( 0.010570,  2, 2, 0, 0),
+    (-0.004710,  1, 3, 0, 0),
+    ( 0.000715,  0, 4, 0, 0),
+    (-0.000280,  0, 0, 0, 1),
+    ( 0.001380,  1, 0, 0, 1),
+]
+
+# Nozzle 37 uses a simplified scaling from 19A (no separate published polynomial set)
+# Scale factor derived from comparative bollard-pull data: 37 produces ~85% of 19A duct thrust
+NOZZLE_37_KTN_SCALE = 0.85
+
+def evaluate_oosterveld_polynomial(coeffs: List[Tuple[float, int, int, int, int]],
+                                    J: float, PD: float, EAR: float, Z: int) -> float:
+    """Evaluate an Oosterveld-type polynomial: sum(C * J^s * (P/D)^t * (AE/A0)^u * Z^v)."""
+    result = 0.0
+    for C, s, t, u, v in coeffs:
+        result += C * (J ** s) * (PD ** t) * (EAR ** u) * (Z ** v)
+    return result
+
+def compute_contraction_ratio(nozzle_id: str, R_prop: float, clearance: float) -> float:
+    """Compute area contraction ratio A_inlet / A_disk from inner profile geometry.
+
+    For accelerating nozzles (19A, 37), the inlet is wider than the prop plane,
+    so contraction_ratio > 1.0 and flow accelerates through the duct.
+    """
+    geom = NOZZLE_GEOM_LIBRARY.get(nozzle_id)
+    if not geom:
+        return 1.0
+    y_in = np.array(geom.y_inner_over_l)
+    x_nd = np.array(geom.x_over_l)
+    L = geom.standard_l_over_d * (2.0 * R_prop)  # nozzle length = L/D * D
+
+    # Inner wall offset at inlet (x/L = 0) and at prop plane
+    y_inlet = float(y_in[0])
+    y_disk = float(np.interp(geom.x_prop_plane_over_l, x_nd, y_in))
+
+    # Effective inner radii (prop radius + clearance + wall offset scaled by L)
+    R_inner_inlet = R_prop + clearance + y_inlet * L
+    R_inner_disk = R_prop + clearance + y_disk * L
+
+    if R_inner_disk <= 0:
+        return 1.0
+    return (R_inner_inlet / R_inner_disk) ** 2

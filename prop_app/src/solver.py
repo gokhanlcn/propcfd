@@ -70,15 +70,14 @@ def solve_performance(geom: PropellerGeometry, cond: OperatingConditions,
     active_nozzle = noz_aero.is_active
     u_nozzle_func = noz_aero.u_nozzle_func
     
-    p_static_base = cond.p_atm + cond.rho * cond.g * cond.h
-    p_local_static = p_static_base * noz_aero.pressure_recovery
+    # p_ref is now computed per-section in the cavitation loop (Adim 1)
     
     A_disk_effective = math.pi * (R**2 - Rh**2)
     if A_disk_effective <= 0:
         warnings.append("Effective disk area <= 0. Check R and Hub Radius.")
         A_disk_effective = 1e-6
         
-    def run_bemt_loop(is_nozzle_active: bool, mass_flux_multiplier: float, u_noz_func):
+    def run_bemt_loop(is_nozzle_active: bool, u_noz_func):
         local_vi = 0.0
         max_iter = 15
         final_results = []
@@ -93,10 +92,7 @@ def solve_performance(geom: PropellerGeometry, cond: OperatingConditions,
                 Vtan = omega * sec.r
                 u_n = u_noz_func(sec.r_over_R, Vax_base_iter) if is_nozzle_active else 0.0
                 Vax_local = Vax_base_iter + u_n
-                
-                # Mass flux consistency mapping limits FoM
-                mass_flux_ratio = mass_flux_multiplier * (Vax_local / max(Vax_base_iter, 1e-6) if Vax_base_iter > 0 else 1.0)
-                
+
                 Vrel = math.sqrt(Vax_local**2 + Vtan**2)
                 if Vrel == 0.0: continue
                     
@@ -135,8 +131,8 @@ def solve_performance(geom: PropellerGeometry, cond: OperatingConditions,
                 F = max(min(F_tip, 1.0), 0.05) * max(min(F_hub, 1.0), 0.05)
                 
                 q = 0.5 * cond.rho * Vrel**2
-                dL = q * sec.chord * CL * sec.dr * mass_flux_ratio
-                dD = q * sec.chord * CD * sec.dr * mass_flux_ratio
+                dL = q * sec.chord * CL * sec.dr
+                dD = q * sec.chord * CD * sec.dr
                 
                 dT = B * (dL * math.cos(beta_i) - dD * math.sin(beta_i)) * F
                 dFt = B * (dL * math.sin(beta_i) + dD * math.cos(beta_i)) * F
@@ -174,69 +170,46 @@ def solve_performance(geom: PropellerGeometry, cond: OperatingConditions,
         return T_iter, Q_iter, final_results, local_vi
 
     # 1. OPEN PROP ÇÖZÜMÜ
-    T_open, Q_open, open_results, vi_open = run_bemt_loop(False, 1.0, lambda r, v: 0.0)
+    T_open, Q_open, open_results, vi_open = run_bemt_loop(False, lambda r, v: 0.0)
     rho_n2_D4, rho_n2_D5 = cond.rho * n**2 * D**4, cond.rho * n**2 * D**5
     KT_open = T_open / rho_n2_D4 if rho_n2_D4 > 0 else 0.0
     KQ_open = Q_open / rho_n2_D5 if rho_n2_D5 > 0 else 0.0
     Pshaft_open = 2 * math.pi * n * Q_open
     eta_open = (T_open * Va) / Pshaft_open if Pshaft_open > 0 else 0.0
     
-    # 2. NOZZLE SURROGATE & TORQUE CONSISTENCY
+    # 2. NOZZLE: Oosterveld polynomial KTN + BEMT inside duct
     if active_nozzle and KT_open > 0:
-        camber_scale = min(noz_aero.camber_ratio / 0.15, 1.2)
-        ld_scale = min(noz_aero.l_over_d / 0.5, 1.2)
-        tau_base = 0.5 * (1.0 + camber_scale) * ld_scale * nozzle_selection.effectiveness
-        
-        # Continuous Regime Curves (Literature-informed Surrogate)
+        from .nozzle_library import (OOSTERVELD_KTN_19A, OOSTERVELD_KQ_19A,
+                                     NOZZLE_37_KTN_SCALE, evaluate_oosterveld_polynomial)
+
+        # Representative P/D from mid-span section
+        mid_idx = len(geom.sections) // 2
+        PD_mean = geom.sections[mid_idx].pitch / D if D > 0 else 1.0
+        EAR = geom.expanded_area_ratio
+        Z = geom.blade_count
+
+        # Nozzle thrust from Oosterveld polynomial
         if noz_aero.nozzle_id == "19A":
-            # 19A: high bollard pull, sharp drop-off
-            tau_ideal = tau_base * 0.95 * max(1.0 - (J / 0.8)**2, -0.2)
-            c_flux = 0.30 * max(1.0 - (J / 0.5)**1.5, 0.0)
+            KTN_poly = evaluate_oosterveld_polynomial(OOSTERVELD_KTN_19A, J, PD_mean, EAR, Z)
         elif noz_aero.nozzle_id == "37":
-            # 37: balanced bollard pull, wider efficiency band
-            tau_ideal = tau_base * 0.65 * max(1.0 - (J / 1.1)**2, -0.05)
-            c_flux = 0.15 * max(1.0 - (J / 0.6)**1.5, 0.0)
+            KTN_poly = evaluate_oosterveld_polynomial(OOSTERVELD_KTN_19A, J, PD_mean, EAR, Z) * NOZZLE_37_KTN_SCALE
         else:
-            tau_ideal = tau_base * 0.70 * max(1.0 - (J / 0.9)**2, -0.1)
-            c_flux = 0.20 * max(1.0 - (J / 0.5)**1.5, 0.0)
-            
+            KTN_poly = evaluate_oosterveld_polynomial(OOSTERVELD_KTN_19A, J, PD_mean, EAR, Z) * 0.9
+
+        # Clearance gap penalty
         gap_factor = max(1.0 - (noz_aero.clearance_ratio * 25.0), 0.5)
-        tau_duct = tau_ideal * noz_aero.tip_gap_relief_factor * gap_factor
-        
-        # Ensure torque draws according to the mass flow required to pump KTN
-        mass_flux_factor = 1.0 + c_flux
-        
-        # Calculate Propeller Thrust operating INSIDE the nozzle (Mass flux scaled)
-        T_prop_with_nozzle_flow, Q_prop_with_nozzle_flow, noz_results, vi_noz = run_bemt_loop(True, mass_flux_factor, u_nozzle_func)
+        KTN_raw = KTN_poly * nozzle_selection.effectiveness * gap_factor
+        KTN = max(KTN_raw, -0.15 * KT_open)
+
+        # Propeller BEMT inside nozzle (u_nozzle modifies axial velocity, no mass_flux_multiplier)
+        T_prop_with_nozzle_flow, Q_prop_with_nozzle_flow, noz_results, vi_noz = run_bemt_loop(True, u_nozzle_func)
         KT_prop_with_nozzle_flow = T_prop_with_nozzle_flow / rho_n2_D4 if rho_n2_D4 > 0 else 0.0
         KQ_prop_with_nozzle_flow = Q_prop_with_nozzle_flow / rho_n2_D5 if rho_n2_D5 > 0 else 0.0
-        
-        # KTN is anchored physically to the thrust the prop relies upon to pull the system
-        KTN_raw = KT_prop_with_nozzle_flow * tau_duct
-        KTN = max(KTN_raw, -0.15 * KT_open)  # allow max 15% drag
-        
+
         KT_total = KTN + KT_prop_with_nozzle_flow
         T_total = KT_total * rho_n2_D4
         Q_total = Q_prop_with_nozzle_flow
-        
-        # 4. FOM GUARDRAIL (Self-Limiting)
-        if J < 0.1 and T_total > 0 and Q_total > 0:
-            P_shaft = compute_shaft_power(cond.rpm, Q_total)
-            A_disk_full = math.pi * (D ** 2) / 4.0
-            P_ideal_min = (T_total ** 1.5) / math.sqrt(2 * cond.rho * A_disk_full)
-            fom = P_ideal_min / P_shaft
-            
-            # Strict FoM limits for ducted applications
-            if fom > 0.98:
-                warnings.append(f"FoM Guardrail active. Self-limiting KTN to enforce FOM <= 0.98 (was {fom:.3f}).")
-                max_T_total = (0.98 * P_shaft * math.sqrt(2 * cond.rho * A_disk_full)) ** (2.0/3.0)
-                if max_T_total < T_prop_with_nozzle_flow:
-                    KTN = 0.0
-                else:
-                    KTN = (max_T_total - T_prop_with_nozzle_flow) / rho_n2_D4
-                KT_total = KT_prop_with_nozzle_flow + KTN
-                T_total = KT_total * rho_n2_D4
-                
+
         active_results = noz_results
         final_vi = vi_noz
     else:
@@ -287,12 +260,20 @@ def solve_performance(geom: PropellerGeometry, cond: OperatingConditions,
         sec = geom.sections[i]
         u_n = u_nozzle_func(sec.r_over_R, Va + final_vi) if active_nozzle else 0.0
         Vrel = math.sqrt((Va + final_vi + u_n)**2 + (omega * sec.r)**2)
-        
-        (sigma_local, sigma_crit_sheet, sheet_severity, 
-         sigma_crit_tip, tip_factor, tip_severity, 
+
+        # Per-section reference pressure: worst case blade at 12 o'clock (top dead center)
+        p_ref_section = cond.p_atm + cond.rho * cond.g * (cond.h - sec.r)
+
+        # Bernoulli pressure correction inside nozzle (accelerating flow lowers static pressure)
+        if active_nozzle and Va > 0:
+            V_disk = Va * noz_aero.contraction_ratio
+            delta_p_bernoulli = 0.5 * cond.rho * (Va**2 - V_disk**2)
+            p_ref_section += delta_p_bernoulli
+
+        (sigma_local, sigma_crit_sheet, sheet_severity,
+         sigma_crit_tip, tip_factor, tip_severity,
          tip_vortex_index_i, combined_severity_i) = calculate_section_cavitation(
-            p_inf=p_static_base,
-            p_inf_noz=p_local_static,
+            p_ref=p_ref_section,
             pv=cond.pv,
             q=res.q_dyn,
             CL=res.CL,
@@ -303,7 +284,7 @@ def solve_performance(geom: PropellerGeometry, cond: OperatingConditions,
             c=sec.chord,
             t=sec.thickness,
             r_over_R=sec.r_over_R,
-            active_nozzle=bool(active_nozzle),
+            nu=cond.nu,
             constants=constants
         )
         
