@@ -122,40 +122,46 @@ class PerformanceResult:
     prop_geom: PropellerGeometry
     conditions: OperatingConditions
     J: float
-    
-    # Explicit Open-Water Reference
-    KT_open_reference: float
-    KQ_open_reference: float
-    T_open_reference: float
-    Q_open_reference: float
-    Pshaft_open_reference: float
-    eta_open_reference: float
-    
-    # Explicit Propeller inside Nozzle (Mass flux affected, but excludes KTN itself)
-    KT_prop_with_nozzle_flow: float
-    KQ_prop_with_nozzle_flow: float
-    T_prop_with_nozzle_flow: float
-    Q_prop_with_nozzle_flow: float
-    
-    # Pure Nozzle Contribution
-    KTN: float
-    T_nozzle: float
-    nozzle_share: float
-    
-    # Total System (Strictly: prop_with_nozzle + nozzle)
+
+    # Headline system performance (open or ducted depending on nozzle_mode).
     KT_total: float
     KQ_total: float
     T_total: float
     Q_total: float
     Pshaft_total: float
     eta_total: float
-    
-    static_efficiency_est: float | None
-    thrust_per_power_N_per_W: float | None
-    Sheet_Cavitation_Est_PCT: float
-    Tip_Vortex_Cavitation_Est_PCT: float
-    Combined_Cavitation_Est_PCT: float
-    Tip_Vortex_Cav_Index: float
+
     section_results: List[SectionResult]
     warnings: List[str]
+
+    # Static / sanity metrics.
+    static_efficiency_est: Optional[float] = None
+    thrust_per_power_N_per_W: Optional[float] = None
+
+    # Cavitation (bounded model).
+    Sheet_Cavitation_Est_PCT: float = 0.0
+    Tip_Vortex_Cavitation_Est_PCT: float = 0.0
+    Combined_Cavitation_Est_PCT: float = 0.0
+    Tip_Vortex_Cav_Index: float = 0.0
+    Burrill_Back_Cavitation_PCT: float = 0.0
+    sigma_0_7R: float = 0.0
+
+    # Open-water bare-propeller reference (always computed).
+    KT_open: float = 0.0
+    KQ_open: float = 0.0
+    T_open: float = 0.0
+    Q_open: float = 0.0
+    eta_open: float = 0.0
+
+    # Duct decomposition (ducted modes only).
+    T_duct: float = 0.0
+    duct_thrust_share: float = 0.0
+    duct_augmentation: float = 1.0
+
+    # Validation overlay: independent literature polynomial, when applicable.
+    method: str = "BEMT"
+    reference_series: str = "generic"
+    KT_reference_poly: Optional[float] = None
+    KQ_reference_poly: Optional[float] = None
+    reference_note: str = ""
 
